@@ -7,6 +7,7 @@ import { ErrorPayload, Job, Jobs } from "..";
 import { SchedulerOptions } from "../types/options";
 import { Connection } from "./connection";
 import { Queue } from "./queue";
+import Redlock from "redlock-leader";
 
 export declare interface Scheduler {
   options: SchedulerOptions;
@@ -18,6 +19,7 @@ export declare interface Scheduler {
   queue: Queue;
   connection: Connection;
   timer: NodeJS.Timeout;
+  redlock: any;
 
   on(event: "start" | "end" | "poll" | "leader", cb: () => void): this;
   on(
@@ -89,6 +91,8 @@ export class Scheduler extends EventEmitter {
   async connect() {
     await this.queue.connect();
     this.connection = this.queue.connection;
+    this.redlock = new Redlock([this.connection.redis])
+    await this.redlock.start()
   }
 
   async start() {
@@ -113,7 +117,7 @@ export class Scheduler extends EventEmitter {
           this.connection.connected === null)
       ) {
         try {
-          await this.releaseLeaderLock();
+          await this.redlock.stop();
         } catch (error) {
           this.emit("error", error);
         }
@@ -138,7 +142,7 @@ export class Scheduler extends EventEmitter {
   async poll() {
     this.processing = true;
     clearTimeout(this.timer);
-    const isLeader = await this.tryForLeader();
+    const isLeader = this.redlock.isLeader;
 
     if (!isLeader) {
       this.leader = false;
@@ -170,57 +174,6 @@ export class Scheduler extends EventEmitter {
         this.poll();
       }, this.options.timeout);
     }
-  }
-
-  private leaderKey() {
-    // TODO: Figure out if more work is needed
-    // return this.connection.key("resque_scheduler_master_lock");
-    return this.connection.key("resque_scheduler_leader_lock");
-  }
-
-  private async tryForLeader() {
-    const leaderKey = this.leaderKey();
-    if (!this.connection || !this.connection.redis) {
-      return;
-    }
-
-    const lockedByMe = await this.connection.redis.set(
-      leaderKey,
-      this.options.name,
-      "NX",
-      "EX",
-      this.options.leaderLockTimeout
-    );
-
-    if (lockedByMe && lockedByMe.toLowerCase() === "ok") {
-      return true;
-    }
-
-    const currentLeaderName = await this.connection.redis.get(leaderKey);
-    if (currentLeaderName === this.options.name) {
-      await this.connection.redis.expire(
-        leaderKey,
-        this.options.leaderLockTimeout
-      );
-      return true;
-    }
-
-    return false;
-  }
-
-  private async releaseLeaderLock() {
-    if (!this.connection || !this.connection.redis) {
-      return;
-    }
-
-    const isLeader = await this.tryForLeader();
-    if (!isLeader) {
-      return false;
-    }
-
-    const deleted = await this.connection.redis.del(this.leaderKey());
-    this.leader = false;
-    return deleted === 1 || deleted.toString() === "true";
   }
 
   private async nextDelayedTimestamp() {

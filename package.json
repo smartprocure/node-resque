@@ -26,7 +26,8 @@
     "node": ">= 8"
   },
   "dependencies": {
-    "ioredis": "^4.19.4"
+    "ioredis": "^4.19.4",
+    "redlock-leader": "^1.0.2"
   },
   "devDependencies": {
     "@types/ioredis": "^4.17.10",
