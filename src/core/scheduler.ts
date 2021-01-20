@@ -91,14 +91,14 @@ export class Scheduler extends EventEmitter {
   async connect() {
     await this.queue.connect();
     this.connection = this.queue.connection;
-    this.redlock = new Redlock([this.connection.redis])
-    await this.redlock.start()
+    this.redlock = new Redlock([this.connection.redis]);
   }
 
   async start() {
     this.processing = false;
 
     if (!this.running) {
+      await this.redlock.start();
       this.emit("start");
       this.running = true;
       this.pollAgainLater();
