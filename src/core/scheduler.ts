@@ -1,6 +1,3 @@
-// To read notes about the leader locking scheme, check out:
-//   https://github.com/resque/resque-scheduler/blob/master/lib/resque/scheduler/locking.rb
-
 import { EventEmitter } from "events";
 import * as os from "os";
 import { ErrorPayload, Job, Jobs } from "..";
@@ -8,6 +5,20 @@ import { SchedulerOptions } from "../types/options";
 import { Connection } from "./connection";
 import { Queue } from "./queue";
 import Redlock from "redlock-leader";
+
+declare class RedlockLeader {
+  constructor(
+    clients: any[],
+    options: {
+      ttl?: number;
+      wait?: number;
+      key?: string;
+    }
+  );
+  isLeader: boolean;
+  start(): Promise<void>;
+  stop(): Promise<void>;
+}
 
 export declare interface Scheduler {
   options: SchedulerOptions;
@@ -19,7 +30,7 @@ export declare interface Scheduler {
   queue: Queue;
   connection: Connection;
   timer: NodeJS.Timeout;
-  redlock: any;
+  redlock: RedlockLeader;
 
   on(event: "start" | "end" | "poll" | "leader", cb: () => void): this;
   on(
