@@ -4,7 +4,7 @@ import { ErrorPayload, Job, Jobs } from "..";
 import { SchedulerOptions } from "../types/options";
 import { Connection } from "./connection";
 import { Queue } from "./queue";
-import  RedlockLeader from "redlock-leader";
+import RedlockLeader from "redlock-leader";
 
 export declare interface Scheduler {
   options: SchedulerOptions;
@@ -89,6 +89,9 @@ export class Scheduler extends EventEmitter {
     await this.queue.connect();
     this.connection = this.queue.connection;
     this.redlock = new RedlockLeader([this.connection.redis]);
+    this.redlock.on("error", (error) => {
+      this.emit("error", error);
+    });
   }
 
   async start() {
