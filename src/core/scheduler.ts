@@ -4,23 +4,7 @@ import { ErrorPayload, Job, Jobs } from "..";
 import { SchedulerOptions } from "../types/options";
 import { Connection } from "./connection";
 import { Queue } from "./queue";
-import Redlock from "redlock-leader";
-
-declare class RedlockLeader extends EventEmitter {
-  constructor(
-    clients: any[],
-    options: {
-      ttl?: number;
-      wait?: number;
-      key?: string;
-    }
-  );
-  isLeader: boolean;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  on(event: "elected" | "extended" | "revoked", cb: () => void): this;
-  on(event: "error", cb: ({ error: Error }) => void): this;
-}
+import  RedlockLeader from "redlock-leader";
 
 export declare interface Scheduler {
   options: SchedulerOptions;
@@ -104,7 +88,7 @@ export class Scheduler extends EventEmitter {
   async connect() {
     await this.queue.connect();
     this.connection = this.queue.connection;
-    this.redlock = new Redlock([this.connection.redis]);
+    this.redlock = new RedlockLeader([this.connection.redis]);
   }
 
   async start() {
