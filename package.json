@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "ioredis": "^4.19.4",
-    "redlock-leader": "^1.0.2"
+    "redlock-leader": "github:dubiousdavid/redlock-leader#1.1.0"
   },
   "devDependencies": {
     "@types/ioredis": "^4.17.10",
