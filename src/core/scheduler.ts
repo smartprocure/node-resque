@@ -6,7 +6,7 @@ import { Connection } from "./connection";
 import { Queue } from "./queue";
 import Redlock from "redlock-leader";
 
-declare class RedlockLeader {
+declare class RedlockLeader extends EventEmitter {
   constructor(
     clients: any[],
     options: {
@@ -18,6 +18,8 @@ declare class RedlockLeader {
   isLeader: boolean;
   start(): Promise<void>;
   stop(): Promise<void>;
+  on(event: "elected" | "extended" | "revoked", cb: () => void): this;
+  on(event: "error", cb: ({ error: Error }) => void): this;
 }
 
 export declare interface Scheduler {
