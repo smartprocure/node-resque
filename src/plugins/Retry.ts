@@ -36,7 +36,6 @@ export class Retry extends Plugin {
       await this.cleanup();
       return true;
     }
-
     const remaining = await this.attemptUp();
     await this.saveLastError();
 
@@ -108,6 +107,8 @@ export class Retry extends Plugin {
   }
 
   maxDelay() {
+    // 64-bit signed integer
+    let redisMaxExpire = 9223372036854775807;
     let maxDelay = this.options.retryDelay || 1;
     if (Array.isArray(this.options.backoffStrategy)) {
       this.options.backoffStrategy.forEach(function (d) {
@@ -116,8 +117,8 @@ export class Retry extends Plugin {
         }
       });
     }
-
-    return maxDelay;
+    // Prevent out of range exception if max delay is larger than largest allowed value
+    return maxDelay > redisMaxExpire ? redisMaxExpire : maxDelay;
   }
 
   redis() {
@@ -126,11 +127,14 @@ export class Retry extends Plugin {
 
   async attemptUp() {
     const key = this.retryKey();
-    await this.redis().setnx(key, -1);
-    const retryCount = await this.redis().incr(key);
-    await this.redis().expire(key, this.maxDelay());
+    const maxDelay = this.maxDelay();
+    const keyNotExist = await this.redis().set(key, 1, "PX", maxDelay, "NX");
+    const retryCount = keyNotExist ? 1 : await this.redis().incr(key);
+    if (!keyNotExist) {
+      await this.redis().pexpire(key, maxDelay);
+    }
 
-    return this.options.retryLimit - retryCount - 1;
+    return this.options.retryLimit - retryCount;
   }
 
   async saveLastError() {
@@ -160,6 +164,7 @@ export class Retry extends Plugin {
       backtrace: backtrace,
       worker: this.func,
       queue: this.queue,
+      attempts: this.options.retryLimit,
     };
 
     await this.redis().setex(
