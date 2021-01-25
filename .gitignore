@@ -3,6 +3,5 @@ node_modules
 npm-debug.log
 dump.rdb
 .idea/
-dist
 docs
 examples/docker/*/package-lock.json
