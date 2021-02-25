@@ -120,11 +120,21 @@ class Scheduler extends events_1.EventEmitter {
         const timestamp = await this.nextDelayedTimestamp();
         if (timestamp) {
             this.emit("workingTimestamp", timestamp);
-            await this.enqueueDelayedItemsForTimestamp(parseInt(timestamp));
+            try {
+                await this.enqueueDelayedItemsForTimestamp(parseInt(timestamp));
+            }
+            catch (error) {
+                this.emit("error", error);
+            }
             return this.poll();
         }
         else {
-            await this.checkStuckWorkers();
+            try {
+                await this.checkStuckWorkers();
+            }
+            catch (error) {
+                this.emit("error", error);
+            }
             this.processing = false;
             return this.pollAgainLater();
         }
