@@ -541,10 +541,7 @@ export class Queue extends EventEmitter {
     while (failedJobs.length > 0 && start < upperLimit) {
       for (const i in failedJobs) {
         const job = failedJobs[i];
-        if (
-          Array.isArray(job?.backtrace) &&
-          job?.backtrace[1] === "queue#forceCleanWorker"
-        ) {
+        if (job?.backtrace?.[1] === "queue#forceCleanWorker") {
           await this.retryAndRemoveFailed(job);
         }
       }
