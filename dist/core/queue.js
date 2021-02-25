@@ -409,7 +409,8 @@ class Queue extends events_1.EventEmitter {
         while (failedJobs.length > 0 && start < upperLimit) {
             for (const i in failedJobs) {
                 const job = failedJobs[i];
-                if ((job === null || job === void 0 ? void 0 : job.backtrace[1]) === "queue#forceCleanWorker") {
+                if (Array.isArray(job === null || job === void 0 ? void 0 : job.backtrace) &&
+                    (job === null || job === void 0 ? void 0 : job.backtrace[1]) === "queue#forceCleanWorker") {
                     await this.retryAndRemoveFailed(job);
                 }
             }
