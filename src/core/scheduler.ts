@@ -56,22 +56,14 @@ export type SchedulerEvent =
   | "transferredJob";
 
 export class Scheduler extends EventEmitter {
-  constructor(options, jobs = {}) {
+  constructor(options: SchedulerOptions, jobs: Jobs = {}) {
     super();
 
-    const defaults = {
-      timeout: 5000, // in ms
-      stuckWorkerTimeout: 60 * 60 * 1000, // 60 minutes in ms
-      leaderLockTimeout: 60 * 3, // in seconds
-      name: os.hostname() + ":" + process.pid, // assumes only one worker per node process
-      retryStuckJobs: false,
-    };
-
-    for (const i in defaults) {
-      if (options[i] === null || options[i] === undefined) {
-        options[i] = defaults[i];
-      }
-    }
+    options.timeout = options.timeout ?? 5000; // in ms
+    options.stuckWorkerTimeout = options.stuckWorkerTimeout ?? 60 * 60 * 1000; // 60 minutes in ms
+    options.leaderLockTimeout = options.leaderLockTimeout ?? 60 * 3; // in seconds
+    options.name = options.name ?? os.hostname() + ":" + process.pid; // assumes only one worker per node process
+    options.retryStuckJobs = options.retryStuckJobs ?? false;
 
     this.options = options;
     this.name = this.options.name;
@@ -141,7 +133,7 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  async poll() {
+  async poll(): Promise<void> {
     this.processing = true;
     clearTimeout(this.timer);
     const isLeader = this.redlock.isLeader;
@@ -186,6 +178,51 @@ export class Scheduler extends EventEmitter {
     }
   }
 
+  private async tryForLeader() {
+    const leaderKey = this.queue.leaderKey();
+    if (!this.connection || !this.connection.redis) {
+      return;
+    }
+
+    const lockedByMe = await this.connection.redis.set(
+      leaderKey,
+      this.options.name,
+      "NX",
+      "EX",
+      this.options.leaderLockTimeout
+    );
+
+    if (lockedByMe && lockedByMe.toLowerCase() === "ok") {
+      return true;
+    }
+
+    const currentLeaderName = await this.connection.redis.get(leaderKey);
+    if (currentLeaderName === this.options.name) {
+      await this.connection.redis.expire(
+        leaderKey,
+        this.options.leaderLockTimeout
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  private async releaseLeaderLock() {
+    if (!this.connection || !this.connection.redis) {
+      return;
+    }
+
+    const isLeader = await this.tryForLeader();
+    if (!isLeader) {
+      return false;
+    }
+
+    const deleted = await this.connection.redis.del(this.queue.leaderKey());
+    this.leader = false;
+    return deleted === 1 || deleted.toString() === "true";
+  }
+
   private async nextDelayedTimestamp() {
     const time = Math.round(new Date().getTime() / 1000);
     const items = await this.connection.redis.zrangebyscore(
@@ -196,9 +233,7 @@ export class Scheduler extends EventEmitter {
       0,
       1
     );
-    if (items.length === 0) {
-      return;
-    }
+    if (items.length === 0) return;
     return items[0];
   }
 
@@ -280,20 +315,22 @@ export class Scheduler extends EventEmitter {
     }
   }
 
-  async forceCleanWorker(workerName, delta) {
+  async forceCleanWorker(workerName: string, delta: number) {
     const errorPayload = await this.queue.forceCleanWorker(workerName);
     this.emit("cleanStuckWorker", workerName, errorPayload, delta);
   }
 
   private async watchIfPossible(key: string) {
-    if (typeof this.connection.redis.watch === "function") {
-      return this.connection.redis.watch(key);
-    }
+    if (this.canWatch()) return this.connection.redis.watch(key);
   }
 
   private async unwatchIfPossible() {
-    if (typeof this.connection.redis.unwatch === "function") {
-      return this.connection.redis.unwatch();
-    }
+    if (this.canWatch()) return this.connection.redis.unwatch();
+  }
+
+  private canWatch() {
+    if (this.connection.redis?.constructor?.name === "RedisMock") return false;
+    if (typeof this.connection.redis.unwatch !== "function") return false;
+    return true;
   }
 }

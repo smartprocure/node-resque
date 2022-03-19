@@ -1,6 +1,9 @@
-import { Queue, Worker, Scheduler } from "../../src";
-import * as RedisMock from "ioredis-mock";
+import { Queue, Worker, Scheduler, Job } from "../../src";
 import specHelper from "../utils/specHelper";
+
+// import * as RedisMock from "ioredis-mock"; // TYPE HACK!
+import * as IORedis from "ioredis";
+const RedisMock: typeof IORedis = require("ioredis-mock");
 
 // for ioredis-mock, we need to re-use a shared connection
 // setting "pkg" is important!
@@ -13,7 +16,7 @@ const jobs = {
       const response = a + b;
       return response;
     },
-  },
+  } as Job<any>,
 };
 
 describe("testing with ioredis-mock package", () => {
@@ -28,18 +31,12 @@ describe("testing with ioredis-mock package", () => {
   });
 
   test("a queue can be created", async () => {
-    queue = new Queue(
-      { connection: connectionDetails, queues: ["math"] },
-      jobs
-    );
+    queue = new Queue({ connection: connectionDetails }, jobs);
     await queue.connect();
   });
 
   test("a scheduler can be created", async () => {
-    scheduler = new Scheduler(
-      { connection: connectionDetails, queues: ["math"] },
-      jobs
-    );
+    scheduler = new Scheduler({ connection: connectionDetails }, jobs);
     await scheduler.connect();
     // await scheduler.start();
   });
@@ -71,17 +68,19 @@ describe("testing with ioredis-mock package", () => {
     expect(jobsLength).toBe(1);
   });
 
-  test("the worker can work the job", async (done) => {
-    await worker.start();
-    worker.on("success", async (q, job, result, duration) => {
-      expect(q).toBe("math");
-      expect(job.class).toBe("add");
-      expect(result).toBe(3);
-      expect(worker.result).toBe(result);
-      expect(duration).toBeGreaterThanOrEqual(0);
+  test("the worker can work the job", async () => {
+    await new Promise(async (resolve) => {
+      await worker.start();
+      worker.on("success", async (q, job, result, duration) => {
+        expect(q).toBe("math");
+        expect(job.class).toBe("add");
+        expect(result).toBe(3);
+        expect(worker.result).toBe(result);
+        expect(duration).toBeGreaterThanOrEqual(0);
 
-      worker.removeAllListeners("success");
-      done();
+        worker.removeAllListeners("success");
+        resolve(null);
+      });
     });
   });
 });

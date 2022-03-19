@@ -1,13 +1,14 @@
 import { EventEmitter } from "events";
+import { Cluster } from "ioredis";
 import * as os from "os";
-import { Job, JobEmit, Jobs } from "..";
+import { Jobs } from "..";
 import { WorkerOptions } from "../types/options";
 import { Connection } from "./connection";
 import { RunPlugins } from "./pluginRunner";
-import { Queue } from "./queue";
+import { ParsedJob, Queue } from "./queue";
 
-function prepareJobs(jobs) {
-  return Object.keys(jobs).reduce(function (h, k) {
+function prepareJobs(jobs: Jobs) {
+  return Object.keys(jobs).reduce((h: { [key: string]: any }, k) => {
     const job = jobs[k];
     h[k] = typeof job === "function" ? { perform: job } : job;
     return h;
@@ -19,7 +20,7 @@ export declare interface Worker {
   jobs: Jobs;
   started: boolean;
   name: string;
-  queues: Array<string>;
+  queues: Array<string> | string;
   queue: string;
   originalQueue: string | null;
   error: Error | null;
@@ -27,8 +28,10 @@ export declare interface Worker {
   ready: boolean;
   running: boolean;
   working: boolean;
+  pollTimer: NodeJS.Timeout;
+  endTimer: NodeJS.Timeout;
   pingTimer: NodeJS.Timeout;
-  job: Job<any>;
+  job: ParsedJob;
   connection: Connection;
   queueObject: Queue;
   id: number;
@@ -37,22 +40,27 @@ export declare interface Worker {
   on(event: "cleaning_worker", cb: (worker: Worker, pid: string) => void): this;
   on(event: "poll", cb: (queue: string) => void): this;
   on(event: "ping", cb: (time: number) => void): this;
-  on(event: "job", cb: (queue: string, job: Job<any> | JobEmit) => void): this;
+  on(event: "job", cb: (queue: string, job: ParsedJob) => void): this;
   on(
     event: "reEnqueue",
-    cb: (queue: string, job: JobEmit, plugin: string) => void
+    cb: (queue: string, job: ParsedJob, plugin: string) => void
   ): this;
   on(
     event: "success",
-    cb: (queue: string, job: JobEmit, result: any, duration: number) => void
+    cb: (queue: string, job: ParsedJob, result: any, duration: number) => void
   ): this;
   on(
     event: "failure",
-    cb: (queue: string, job: JobEmit, failure: any, duration: number) => void
+    cb: (
+      queue: string,
+      job: ParsedJob,
+      failure: Error,
+      duration: number
+    ) => void
   ): this;
   on(
     event: "error",
-    cb: (error: Error, queue: string, job: Job<any> | JobEmit) => void
+    cb: (error: Error, queue: string, job: ParsedJob) => void
   ): this;
 
   once(event: "start" | "end" | "pause", cb: () => void): this;
@@ -62,28 +70,25 @@ export declare interface Worker {
   ): this;
   once(event: "poll", cb: (queue: string) => void): this;
   once(event: "ping", cb: (time: number) => void): this;
-  once(
-    event: "job",
-    cb: (queue: string, job: Job<any> | JobEmit) => void
-  ): this;
+  once(event: "job", cb: (queue: string, job: ParsedJob) => void): this;
   once(
     event: "reEnqueue",
-    cb: (queue: string, job: Job<any> | JobEmit, plugin: string) => void
+    cb: (queue: string, job: ParsedJob, plugin: string) => void
   ): this;
   once(
     event: "success",
-    cb: (queue: string, job: Job<any> | JobEmit, result: any) => void
+    cb: (queue: string, job: ParsedJob, result: any) => void
   ): this;
   once(
     event: "failure",
-    cb: (queue: string, job: Job<any> | JobEmit, failure: any) => void
+    cb: (queue: string, job: ParsedJob, failure: any) => void
   ): this;
   once(
     event: "error",
-    cb: (error: Error, queue: string, job: Job<any> | JobEmit) => void
+    cb: (error: Error, queue: string, job: ParsedJob) => void
   ): this;
 
-  removeAllListeners(event: WorkerEvent): this;
+  removeAllListeners(event: string): this;
 }
 
 export type WorkerEvent =
@@ -100,22 +105,14 @@ export type WorkerEvent =
   | "pause";
 
 export class Worker extends EventEmitter {
-  constructor(options, jobs = {}) {
+  constructor(options: WorkerOptions, jobs: Jobs = {}) {
     super();
 
-    const defaults = {
-      name: os.hostname() + ":" + process.pid, // assumes only one worker per node process
-      queues: "*",
-      timeout: 5000,
-      looping: true,
-      id: 1,
-    };
-
-    for (const i in defaults) {
-      if (options[i] === undefined || options[i] === null) {
-        options[i] = defaults[i];
-      }
-    }
+    options.name = options.name ?? os.hostname() + ":" + process.pid; // assumes only one worker per node process
+    options.id = options.id ?? 1;
+    options.queues = options.queues ?? "*";
+    options.timeout = options.timeout ?? 5000;
+    options.looping = options.looping ?? true;
 
     this.options = options;
     this.jobs = prepareJobs(jobs);
@@ -129,6 +126,8 @@ export class Worker extends EventEmitter {
     this.running = false;
     this.working = false;
     this.job = null;
+    this.pollTimer = null;
+    this.endTimer = null;
     this.pingTimer = null;
     this.started = false;
 
@@ -153,7 +152,7 @@ export class Worker extends EventEmitter {
     }
   }
 
-  private async init() {
+  async init() {
     await this.track();
     await this.connection.redis.set(
       this.connection.key("worker", this.name, this.stringQueues(), "started"),
@@ -163,17 +162,21 @@ export class Worker extends EventEmitter {
     this.pingTimer = setInterval(this.ping.bind(this), this.options.timeout);
   }
 
-  async end() {
+  async end(): Promise<void> {
     this.running = false;
 
     if (this.working === true) {
       await new Promise((resolve) => {
-        setTimeout(() => {
+        this.endTimer = setTimeout(() => {
           resolve(null);
         }, this.options.timeout);
       });
       return this.end();
     }
+
+    clearTimeout(this.pollTimer);
+    clearTimeout(this.endTimer);
+    clearInterval(this.pingTimer);
 
     if (
       this.connection &&
@@ -181,7 +184,6 @@ export class Worker extends EventEmitter {
         this.connection.connected === undefined ||
         this.connection.connected === null)
     ) {
-      clearInterval(this.pingTimer);
       await this.untrack();
     }
 
@@ -189,7 +191,7 @@ export class Worker extends EventEmitter {
     this.emit("end", new Date());
   }
 
-  private async poll(nQueue = 0) {
+  private async poll(nQueue = 0): Promise<ParsedJob> {
     if (!this.running) return;
 
     this.queue = this.queues[nQueue];
@@ -214,7 +216,7 @@ export class Worker extends EventEmitter {
       if (currentJob) {
         if (this.options.looping) {
           this.result = null;
-          return this.perform(currentJob);
+          await this.perform(currentJob);
         } else {
           return currentJob;
         }
@@ -236,7 +238,7 @@ export class Worker extends EventEmitter {
     }
   }
 
-  private async perform(job) {
+  private async perform(job: ParsedJob) {
     this.job = job;
     this.error = null;
     let toRun;
@@ -315,7 +317,7 @@ export class Worker extends EventEmitter {
   // #performInline is used to run a job payload directly.
   // If you are planning on running a job via #performInline, this worker should also not be started, nor should be using event emitters to monitor this worker.
   // This method will also not write to redis at all, including logging errors, modify resque's stats, etc.
-  async performInline(func, args = []) {
+  async performInline(func: string, args: any[] = []) {
     const q = "_direct-queue-" + this.name;
     let toRun;
 
@@ -382,30 +384,32 @@ export class Worker extends EventEmitter {
     }
   }
 
-  private async succeed(job, duration: number) {
-    await this.connection.redis.incr(this.connection.key("stat", "processed"));
-    await this.connection.redis.incr(
-      this.connection.key("stat", "processed", this.name)
-    );
+  private async succeed(job: ParsedJob, duration: number) {
+    await this.connection.redis
+      .multi()
+      .incr(this.connection.key("stat", "processed"))
+      .incr(this.connection.key("stat", "processed", this.name))
+      .exec();
     this.emit("success", this.queue, job, this.result, duration);
   }
 
-  private async fail(err, duration: number) {
-    await this.connection.redis.incr(this.connection.key("stat", "failed"));
-    await this.connection.redis.incr(
-      this.connection.key("stat", "failed", this.name)
-    );
-    await this.connection.redis.rpush(
-      this.connection.key("failed"),
-      JSON.stringify(this.failurePayload(err, this.job))
-    );
+  private async fail(err: Error, duration: number) {
+    await this.connection.redis
+      .multi()
+      .incr(this.connection.key("stat", "failed"))
+      .incr(this.connection.key("stat", "failed", this.name))
+      .rpush(
+        this.connection.key("failed"),
+        JSON.stringify(this.failurePayload(err, this.job))
+      )
+      .exec();
     this.emit("failure", this.queue, this.job, err, duration);
   }
 
   private async pause() {
     this.emit("pause");
     await new Promise((resolve) => {
-      setTimeout(() => {
+      this.pollTimer = setTimeout(() => {
         this.poll();
         resolve(null);
       }, this.options.timeout);
@@ -413,7 +417,7 @@ export class Worker extends EventEmitter {
   }
 
   private async getJob() {
-    let currentJob: { [key: string]: any } = null;
+    let currentJob: ParsedJob;
     const queueKey = this.connection.key("queue", this.queue);
     const workerKey = this.connection.key(
       "worker",
@@ -423,7 +427,13 @@ export class Worker extends EventEmitter {
 
     let encodedJob: string;
 
-    if (this.connection.redis["popAndStoreJob"]) {
+    if (
+      // We cannot use the atomic Lua script if we are using redis cluster - the shard storing the queue and worker may not be the same
+      !(this.connection.redis instanceof Cluster) &&
+      //@ts-ignore
+      this.connection.redis["popAndStoreJob"]
+    ) {
+      //@ts-ignore
       encodedJob = await this.connection.redis["popAndStoreJob"](
         queueKey,
         workerKey,
@@ -460,6 +470,8 @@ export class Worker extends EventEmitter {
   }
 
   private async ping() {
+    if (!this.running) return;
+
     const name = this.name;
     const nowSeconds = Math.round(new Date().getTime() / 1000);
     this.emit("ping", nowSeconds);
@@ -481,25 +493,15 @@ export class Worker extends EventEmitter {
       return;
     }
 
-    await this.connection.redis.srem(
-      this.connection.key("workers"),
-      name + ":" + queues
-    );
-    await this.connection.redis.del(
-      this.connection.key("worker", "ping", name)
-    );
-    await this.connection.redis.del(
-      this.connection.key("worker", name, queues)
-    );
-    await this.connection.redis.del(
-      this.connection.key("worker", name, queues, "started")
-    );
-    await this.connection.redis.del(
-      this.connection.key("stat", "failed", name)
-    );
-    await this.connection.redis.del(
-      this.connection.key("stat", "processed", name)
-    );
+    await this.connection.redis
+      .multi()
+      .srem(this.connection.key("workers"), name + ":" + queues)
+      .del(this.connection.key("worker", "ping", name))
+      .del(this.connection.key("worker", name, queues))
+      .del(this.connection.key("worker", name, queues, "started"))
+      .del(this.connection.key("stat", "failed", name))
+      .del(this.connection.key("stat", "processed", name))
+      .exec();
   }
 
   async checkQueues() {
@@ -522,7 +524,7 @@ export class Worker extends EventEmitter {
     }
   }
 
-  private failurePayload(err, job) {
+  private failurePayload(err: Error, job: ParsedJob) {
     return {
       worker: this.name,
       queue: this.queue,
@@ -539,7 +541,7 @@ export class Worker extends EventEmitter {
       return ["*"].join(",");
     } else {
       try {
-        return this.queues.join(",");
+        return Array.isArray(this.queues) ? this.queues.join(",") : this.queues;
       } catch (e) {
         return "";
       }

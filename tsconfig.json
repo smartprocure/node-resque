@@ -4,9 +4,8 @@
     "allowJs": true,
     "esModuleInterop": true,
     "module": "commonjs",
-    "target": "es2018"
+    "target": "es2018",
+    "noImplicitAny": true
   },
-  "include": [
-    "./src/**/*"
-  ]
+  "include": ["./src/**/*"]
 }

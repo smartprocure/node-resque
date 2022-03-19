@@ -1,4 +1,4 @@
-import * as Ioredis from "ioredis";
+import * as IORedis from "ioredis";
 import { Connection } from "../../src";
 import specHelper from "../utils/specHelper";
 
@@ -13,31 +13,6 @@ describe("connection", () => {
     await specHelper.disconnect();
   });
 
-  test(
-    "can provide an error if connection failed",
-    async (resolve) => {
-      const connectionDetails = {
-        pkg: specHelper.connectionDetails.pkg,
-        host: "wrong-hostname",
-        password: specHelper.connectionDetails.password,
-        port: specHelper.connectionDetails.port,
-        database: specHelper.connectionDetails.database,
-        namespace: specHelper.connectionDetails.namespace,
-      };
-
-      const connection = new Connection(connectionDetails);
-
-      connection.connect();
-
-      connection.on("error", (error) => {
-        expect(error.message).toMatch(/ENOTFOUND|ETIMEDOUT|ECONNREFUSED/);
-        connection.end();
-        resolve();
-      });
-    },
-    30 * 1000
-  );
-
   test("should stat with no redis keys in the namespace", async () => {
     const keys = await specHelper.redis.keys(specHelper.namespace + "*");
     expect(keys.length).toBe(0);
@@ -46,6 +21,7 @@ describe("connection", () => {
   test("it has loaded Lua commands", async () => {
     const connection = new Connection(specHelper.cleanConnectionDetails());
     await connection.connect();
+    //@ts-ignore
     expect(typeof connection.redis["popAndStoreJob"]).toBe("function");
     connection.end();
   });
@@ -58,10 +34,10 @@ describe("connection", () => {
       await connection.connect();
     });
 
-    let prefixedConnection;
-    let prefixedRedis;
+    let prefixedConnection: Connection;
+    let prefixedRedis: IORedis.Redis;
     beforeAll(async () => {
-      prefixedRedis = new Ioredis(null, null, {
+      prefixedRedis = new IORedis(null, null, {
         keyPrefix: "customNamespace:",
         db: db,
       });
@@ -80,31 +56,27 @@ describe("connection", () => {
 
     test("getKeys returns appropriate keys based on matcher given", async () => {
       // seed the DB with keys to test with
-      await Promise.all(
-        new Array(25)
-          .fill(0)
-          .map((v, i) => i + 1)
-          .map(async (v) => {
-            await connection.redis.set(`test-key${v}`, v.toString());
-            if (v <= 5) {
-              await connection.redis.set(`test-not-key${v}`, v.toString());
-            }
-          })
-      );
+
+      for (const v of new Array(5).fill(0).map((v, i) => i + 1)) {
+        await connection.redis.set(`test-key${v}`, v.toString());
+        await connection.redis.set(`test-not-key${v}`, v.toString());
+      }
+
+      await connection.redis.set(`test-key2`, 2);
+      await connection.redis.set(`test-key3`, 3);
+      await connection.redis.set(`test-key4`, 4);
+      await connection.redis.set(`test-key5`, 5);
 
       // sanity checks to confirm keys above are set and exist
       expect(await connection.redis.get("test-key1")).toBe("1");
-      expect(await connection.redis.get("test-key20")).toBe("20");
       expect(await connection.redis.get("test-not-key1")).toBe("1");
       expect(await connection.redis.get("test-not-key5")).toBe("5");
 
       const foundKeys = await connection.getKeys("test-key*");
 
-      expect(foundKeys.length).toBe(25);
+      expect(foundKeys.length).toBe(5);
       expect(foundKeys).toContain("test-key1");
       expect(foundKeys).toContain("test-key5");
-      expect(foundKeys).toContain("test-key20");
-      expect(foundKeys).toContain("test-key25");
       expect(foundKeys).not.toContain("test-key50");
       expect(foundKeys).not.toContain("test-not-key1");
       expect(foundKeys).not.toContain("test-not-key3");
