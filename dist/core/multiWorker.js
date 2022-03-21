@@ -1,7 +1,11 @@
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -26,21 +30,14 @@ const worker_1 = require("./worker");
 const eventLoopDelay_1 = require("../utils/eventLoopDelay");
 class MultiWorker extends events_1.EventEmitter {
     constructor(options, jobs) {
+        var _a, _b, _c, _d, _e, _f;
         super();
-        const defaults = {
-            // all times in ms
-            minTaskProcessors: 1,
-            maxTaskProcessors: 10,
-            timeout: 5000,
-            checkTimeout: 500,
-            maxEventLoopDelay: 10,
-            name: os.hostname(),
-        };
-        for (const i in defaults) {
-            if (options[i] === null || options[i] === undefined) {
-                options[i] = defaults[i];
-            }
-        }
+        options.name = (_a = options.name) !== null && _a !== void 0 ? _a : os.hostname();
+        options.minTaskProcessors = (_b = options.minTaskProcessors) !== null && _b !== void 0 ? _b : 1;
+        options.maxTaskProcessors = (_c = options.maxTaskProcessors) !== null && _c !== void 0 ? _c : 10;
+        options.timeout = (_d = options.timeout) !== null && _d !== void 0 ? _d : 5000;
+        options.checkTimeout = (_e = options.checkTimeout) !== null && _e !== void 0 ? _e : 500;
+        options.maxEventLoopDelay = (_f = options.maxEventLoopDelay) !== null && _f !== void 0 ? _f : 10;
         if (options.connection.redis &&
             typeof options.connection.redis.setMaxListeners === "function") {
             options.connection.redis.setMaxListeners(options.connection.redis.getMaxListeners() + options.maxTaskProcessors);
@@ -59,7 +56,7 @@ class MultiWorker extends events_1.EventEmitter {
         this.PollEventLoopDelay();
     }
     PollEventLoopDelay() {
-        eventLoopDelay_1.EventLoopDelay(this.options.maxEventLoopDelay, this.options.checkTimeout, (blocked, ms) => {
+        (0, eventLoopDelay_1.EventLoopDelay)(this.options.maxEventLoopDelay, this.options.checkTimeout, (blocked, ms) => {
             this.eventLoopBlocked = blocked;
             this.eventLoopDelay = ms;
             this.eventLoopCheckCounter++;
@@ -194,9 +191,8 @@ class MultiWorker extends events_1.EventEmitter {
             "failure",
             "error",
             "pause",
-            "internalError",
             "multiWorkerAction",
-        ].forEach(function (e) {
+        ].forEach((e) => {
             worker.removeAllListeners(e);
         });
     }

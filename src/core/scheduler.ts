@@ -81,7 +81,7 @@ export class Scheduler extends EventEmitter {
     await this.queue.connect();
     this.connection = this.queue.connection;
     this.redlock = new RedlockLeader([this.connection.redis], {
-      key: this.connection.key("leader")
+      key: this.connection.key("leader"),
     });
     this.redlock.on("error", (error) => {
       this.emit("error", error);

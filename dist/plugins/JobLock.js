@@ -4,10 +4,10 @@ exports.JobLock = void 0;
 // If a job with the same name, queue, and args is already running, put this job back in the queue and try later
 const __1 = require("..");
 class JobLock extends __1.Plugin {
-    beforeEnqueue() {
+    async beforeEnqueue() {
         return true;
     }
-    afterEnqueue() {
+    async afterEnqueue() {
         return true;
     }
     async beforePerform() {

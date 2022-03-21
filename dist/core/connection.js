@@ -1,8 +1,11 @@
 "use strict";
-/// <reference path="./../../node_modules/@types/ioredis/index.d.ts" />
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -26,21 +29,15 @@ const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 class Connection extends events_1.EventEmitter {
     constructor(options = {}) {
+        var _a, _b, _c, _d, _e, _f, _g;
         super();
-        const defaults = {
-            pkg: "ioredis",
-            host: "127.0.0.1",
-            port: 6379,
-            database: 0,
-            namespace: "resque",
-            options: {},
-            scanCount: 10,
-        };
-        for (const i in defaults) {
-            if (options[i] === null || options[i] === undefined) {
-                options[i] = defaults[i];
-            }
-        }
+        options.pkg = (_a = options.pkg) !== null && _a !== void 0 ? _a : "ioredis";
+        options.host = (_b = options.host) !== null && _b !== void 0 ? _b : "127.0.0.1";
+        options.port = (_c = options.port) !== null && _c !== void 0 ? _c : 6379;
+        options.database = (_d = options.database) !== null && _d !== void 0 ? _d : 0;
+        options.namespace = (_e = options.namespace) !== null && _e !== void 0 ? _e : "resque";
+        options.scanCount = (_f = options.scanCount) !== null && _f !== void 0 ? _f : 10;
+        options.options = (_g = options.options) !== null && _g !== void 0 ? _g : {};
         this.options = options;
         this.eventListeners = {};
         this.connected = false;
@@ -115,16 +112,15 @@ class Connection extends events_1.EventEmitter {
             if (matches && matches.length > 0) {
                 keysAry = keysAry.concat(matches);
             }
-            if (newCursor === "0") {
+            if (newCursor === "0")
                 return keysAry;
-            }
             return this.getKeys(match, count, keysAry, parseInt(newCursor));
         }
         this.emit("error", new Error("You must establish a connection to redis before running the getKeys command."));
     }
     end() {
         Object.keys(this.listeners).forEach((eventName) => {
-            this.redis.removeListener(eventName, this.listeners[eventName]);
+            this.redis.removeAllListeners(eventName);
         });
         // Only disconnect if we established the redis connection on our own.
         if (!this.options.redis && this.connected) {

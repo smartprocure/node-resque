@@ -1,7 +1,11 @@
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -29,19 +33,13 @@ const queue_1 = require("./queue");
 const redlock_leader_1 = __importDefault(require("redlock-leader"));
 class Scheduler extends events_1.EventEmitter {
     constructor(options, jobs = {}) {
+        var _a, _b, _c, _d, _e;
         super();
-        const defaults = {
-            timeout: 5000,
-            stuckWorkerTimeout: 60 * 60 * 1000,
-            leaderLockTimeout: 60 * 3,
-            name: os.hostname() + ":" + process.pid,
-            retryStuckJobs: false,
-        };
-        for (const i in defaults) {
-            if (options[i] === null || options[i] === undefined) {
-                options[i] = defaults[i];
-            }
-        }
+        options.timeout = (_a = options.timeout) !== null && _a !== void 0 ? _a : 5000; // in ms
+        options.stuckWorkerTimeout = (_b = options.stuckWorkerTimeout) !== null && _b !== void 0 ? _b : 60 * 60 * 1000; // 60 minutes in ms
+        options.leaderLockTimeout = (_c = options.leaderLockTimeout) !== null && _c !== void 0 ? _c : 60 * 3; // in seconds
+        options.name = (_d = options.name) !== null && _d !== void 0 ? _d : os.hostname() + ":" + process.pid; // assumes only one worker per node process
+        options.retryStuckJobs = (_e = options.retryStuckJobs) !== null && _e !== void 0 ? _e : false;
         this.options = options;
         this.name = this.options.name;
         this.leader = false;
@@ -56,7 +54,7 @@ class Scheduler extends events_1.EventEmitter {
         await this.queue.connect();
         this.connection = this.queue.connection;
         this.redlock = new redlock_leader_1.default([this.connection.redis], {
-            key: this.connection.key("leader")
+            key: this.connection.key("leader"),
         });
         this.redlock.on("error", (error) => {
             this.emit("error", error);
@@ -146,12 +144,39 @@ class Scheduler extends events_1.EventEmitter {
             }, this.options.timeout);
         }
     }
+    async tryForLeader() {
+        const leaderKey = this.queue.leaderKey();
+        if (!this.connection || !this.connection.redis) {
+            return;
+        }
+        const lockedByMe = await this.connection.redis.set(leaderKey, this.options.name, "NX", "EX", this.options.leaderLockTimeout);
+        if (lockedByMe && lockedByMe.toLowerCase() === "ok") {
+            return true;
+        }
+        const currentLeaderName = await this.connection.redis.get(leaderKey);
+        if (currentLeaderName === this.options.name) {
+            await this.connection.redis.expire(leaderKey, this.options.leaderLockTimeout);
+            return true;
+        }
+        return false;
+    }
+    async releaseLeaderLock() {
+        if (!this.connection || !this.connection.redis) {
+            return;
+        }
+        const isLeader = await this.tryForLeader();
+        if (!isLeader) {
+            return false;
+        }
+        const deleted = await this.connection.redis.del(this.queue.leaderKey());
+        this.leader = false;
+        return deleted === 1 || deleted.toString() === "true";
+    }
     async nextDelayedTimestamp() {
         const time = Math.round(new Date().getTime() / 1000);
         const items = await this.connection.redis.zrangebyscore(this.connection.key("delayed_queue_schedule"), 0, time, "LIMIT", 0, 1);
-        if (items.length === 0) {
+        if (items.length === 0)
             return;
-        }
         return items[0];
     }
     async enqueueDelayedItemsForTimestamp(timestamp) {
@@ -216,14 +241,20 @@ class Scheduler extends events_1.EventEmitter {
         this.emit("cleanStuckWorker", workerName, errorPayload, delta);
     }
     async watchIfPossible(key) {
-        if (typeof this.connection.redis.watch === "function") {
+        if (this.canWatch())
             return this.connection.redis.watch(key);
-        }
     }
     async unwatchIfPossible() {
-        if (typeof this.connection.redis.unwatch === "function") {
+        if (this.canWatch())
             return this.connection.redis.unwatch();
-        }
+    }
+    canWatch() {
+        var _a, _b;
+        if (((_b = (_a = this.connection.redis) === null || _a === void 0 ? void 0 : _a.constructor) === null || _b === void 0 ? void 0 : _b.name) === "RedisMock")
+            return false;
+        if (typeof this.connection.redis.unwatch !== "function")
+            return false;
+        return true;
     }
 }
 exports.Scheduler = Scheduler;

@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.Noop = void 0;
 const __1 = require("..");
 class Noop extends __1.Plugin {
-    afterPerform() {
+    async afterPerform() {
         if (this.worker.error) {
             if (typeof this.options.logger === "function") {
                 this.options.logger(this.worker.error);
@@ -15,13 +15,13 @@ class Noop extends __1.Plugin {
         }
         return true;
     }
-    beforeEnqueue() {
+    async beforeEnqueue() {
         return true;
     }
-    afterEnqueue() {
+    async afterEnqueue() {
         return true;
     }
-    beforePerform() {
+    async beforePerform() {
         return true;
     }
 }

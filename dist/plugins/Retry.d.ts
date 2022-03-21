@@ -1,14 +1,16 @@
 /// <reference types="ioredis" />
-import { Plugin } from "..";
+import { Plugin, Worker, ParsedJob, Queue } from "..";
 export declare class Retry extends Plugin {
-    constructor(worker: any, func: any, queue: any, job: any, args: any, options: any);
-    beforeEnqueue(): boolean;
-    afterEnqueue(): boolean;
-    beforePerform(): boolean;
+    constructor(worker: Queue | Worker, func: string, queue: string, job: ParsedJob, args: Array<any>, options: {
+        [key: string]: any;
+    });
+    beforeEnqueue(): Promise<boolean>;
+    afterEnqueue(): Promise<boolean>;
+    beforePerform(): Promise<boolean>;
     afterPerform(): Promise<boolean>;
     argsKey(): string;
-    retryKey(): any;
-    failureKey(): any;
+    retryKey(): string;
+    failureKey(): string;
     maxDelay(): any;
     redis(): import("ioredis").Redis | import("ioredis").Cluster;
     attemptUp(): Promise<number>;

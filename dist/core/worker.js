@@ -1,7 +1,11 @@
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -21,11 +25,12 @@ var __importStar = (this && this.__importStar) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Worker = void 0;
 const events_1 = require("events");
+const ioredis_1 = require("ioredis");
 const os = __importStar(require("os"));
 const pluginRunner_1 = require("./pluginRunner");
 const queue_1 = require("./queue");
 function prepareJobs(jobs) {
-    return Object.keys(jobs).reduce(function (h, k) {
+    return Object.keys(jobs).reduce((h, k) => {
         const job = jobs[k];
         h[k] = typeof job === "function" ? { perform: job } : job;
         return h;
@@ -33,19 +38,13 @@ function prepareJobs(jobs) {
 }
 class Worker extends events_1.EventEmitter {
     constructor(options, jobs = {}) {
+        var _a, _b, _c, _d, _e;
         super();
-        const defaults = {
-            name: os.hostname() + ":" + process.pid,
-            queues: "*",
-            timeout: 5000,
-            looping: true,
-            id: 1,
-        };
-        for (const i in defaults) {
-            if (options[i] === undefined || options[i] === null) {
-                options[i] = defaults[i];
-            }
-        }
+        options.name = (_a = options.name) !== null && _a !== void 0 ? _a : os.hostname() + ":" + process.pid; // assumes only one worker per node process
+        options.id = (_b = options.id) !== null && _b !== void 0 ? _b : 1;
+        options.queues = (_c = options.queues) !== null && _c !== void 0 ? _c : "*";
+        options.timeout = (_d = options.timeout) !== null && _d !== void 0 ? _d : 5000;
+        options.looping = (_e = options.looping) !== null && _e !== void 0 ? _e : true;
         this.options = options;
         this.jobs = prepareJobs(jobs);
         this.name = this.options.name;
@@ -58,6 +57,8 @@ class Worker extends events_1.EventEmitter {
         this.running = false;
         this.working = false;
         this.job = null;
+        this.pollTimer = null;
+        this.endTimer = null;
         this.pingTimer = null;
         this.started = false;
         this.queueObject = new queue_1.Queue({ connection: options.connection }, this.jobs);
@@ -88,17 +89,19 @@ class Worker extends events_1.EventEmitter {
         this.running = false;
         if (this.working === true) {
             await new Promise((resolve) => {
-                setTimeout(() => {
+                this.endTimer = setTimeout(() => {
                     resolve(null);
                 }, this.options.timeout);
             });
             return this.end();
         }
+        clearTimeout(this.pollTimer);
+        clearTimeout(this.endTimer);
+        clearInterval(this.pingTimer);
         if (this.connection &&
             (this.connection.connected === true ||
                 this.connection.connected === undefined ||
                 this.connection.connected === null)) {
-            clearInterval(this.pingTimer);
             await this.untrack();
         }
         await this.queueObject.end();
@@ -125,7 +128,7 @@ class Worker extends events_1.EventEmitter {
             if (currentJob) {
                 if (this.options.looping) {
                     this.result = null;
-                    return this.perform(currentJob);
+                    await this.perform(currentJob);
                 }
                 else {
                     return currentJob;
@@ -168,7 +171,7 @@ class Worker extends events_1.EventEmitter {
         this.emit("job", this.queue, this.job);
         let triedAfterPerform = false;
         try {
-            toRun = await pluginRunner_1.RunPlugins(this, "beforePerform", job.class, this.queue, this.jobs[job.class], job.args);
+            toRun = await (0, pluginRunner_1.RunPlugins)(this, "beforePerform", job.class, this.queue, this.jobs[job.class], job.args);
             if (toRun === false) {
                 return this.completeJob(false, startedAt);
             }
@@ -183,14 +186,14 @@ class Worker extends events_1.EventEmitter {
             }
             this.result = await perform.apply(this, callableArgs);
             triedAfterPerform = true;
-            toRun = await pluginRunner_1.RunPlugins(this, "afterPerform", job.class, this.queue, this.jobs[job.class], job.args);
+            toRun = await (0, pluginRunner_1.RunPlugins)(this, "afterPerform", job.class, this.queue, this.jobs[job.class], job.args);
             return this.completeJob(true, startedAt);
         }
         catch (error) {
             this.error = error;
             if (!triedAfterPerform) {
                 try {
-                    await pluginRunner_1.RunPlugins(this, "afterPerform", job.class, this.queue, this.jobs[job.class], job.args);
+                    await (0, pluginRunner_1.RunPlugins)(this, "afterPerform", job.class, this.queue, this.jobs[job.class], job.args);
                 }
                 catch (error) {
                     if (error && !this.error) {
@@ -219,18 +222,32 @@ class Worker extends events_1.EventEmitter {
         if (!this.jobs[func].perform) {
             throw new Error(`Missing Job: "${func}"`);
         }
+        let triedAfterPerform = false;
         try {
-            toRun = await pluginRunner_1.RunPlugins(this, "beforePerform", func, q, this.jobs[func], args);
+            toRun = await (0, pluginRunner_1.RunPlugins)(this, "beforePerform", func, q, this.jobs[func], args);
             if (toRun === false) {
                 return;
             }
             this.result = await this.jobs[func].perform.apply(this, args);
-            toRun = await pluginRunner_1.RunPlugins(this, "afterPerform", func, q, this.jobs[func], args);
+            triedAfterPerform = true;
+            toRun = await (0, pluginRunner_1.RunPlugins)(this, "afterPerform", func, q, this.jobs[func], args);
             return this.result;
         }
         catch (error) {
             this.error = error;
-            throw error;
+            if (!triedAfterPerform) {
+                try {
+                    await (0, pluginRunner_1.RunPlugins)(this, "afterPerform", func, this.queue, this.jobs[func], args);
+                }
+                catch (error) {
+                    if (error && !this.error) {
+                        this.error = error;
+                    }
+                }
+            }
+            // Allow afterPerform to clear the error
+            if (this.error)
+                throw this.error;
         }
     }
     async completeJob(toRespond, startedAt) {
@@ -249,31 +266,42 @@ class Worker extends events_1.EventEmitter {
         }
     }
     async succeed(job, duration) {
-        await this.connection.redis.incr(this.connection.key("stat", "processed"));
-        await this.connection.redis.incr(this.connection.key("stat", "processed", this.name));
+        await this.connection.redis
+            .multi()
+            .incr(this.connection.key("stat", "processed"))
+            .incr(this.connection.key("stat", "processed", this.name))
+            .exec();
         this.emit("success", this.queue, job, this.result, duration);
     }
     async fail(err, duration) {
-        await this.connection.redis.incr(this.connection.key("stat", "failed"));
-        await this.connection.redis.incr(this.connection.key("stat", "failed", this.name));
-        await this.connection.redis.rpush(this.connection.key("failed"), JSON.stringify(this.failurePayload(err, this.job)));
+        await this.connection.redis
+            .multi()
+            .incr(this.connection.key("stat", "failed"))
+            .incr(this.connection.key("stat", "failed", this.name))
+            .rpush(this.connection.key("failed"), JSON.stringify(this.failurePayload(err, this.job)))
+            .exec();
         this.emit("failure", this.queue, this.job, err, duration);
     }
     async pause() {
         this.emit("pause");
         await new Promise((resolve) => {
-            setTimeout(() => {
+            this.pollTimer = setTimeout(() => {
                 this.poll();
                 resolve(null);
             }, this.options.timeout);
         });
     }
     async getJob() {
-        let currentJob = null;
+        let currentJob;
         const queueKey = this.connection.key("queue", this.queue);
         const workerKey = this.connection.key("worker", this.name, this.stringQueues());
         let encodedJob;
-        if (this.connection.redis["popAndStoreJob"]) {
+        if (
+        // We cannot use the atomic Lua script if we are using redis cluster - the shard storing the queue and worker may not be the same
+        !(this.connection.redis instanceof ioredis_1.Cluster) &&
+            //@ts-ignore
+            this.connection.redis["popAndStoreJob"]) {
+            //@ts-ignore
             encodedJob = await this.connection.redis["popAndStoreJob"](queueKey, workerKey, new Date().toString(), this.queue, this.name);
         }
         else {
@@ -296,6 +324,8 @@ class Worker extends events_1.EventEmitter {
         return this.connection.redis.sadd(this.connection.key("workers"), this.name + ":" + this.stringQueues());
     }
     async ping() {
+        if (!this.running)
+            return;
         const name = this.name;
         const nowSeconds = Math.round(new Date().getTime() / 1000);
         this.emit("ping", nowSeconds);
@@ -312,12 +342,15 @@ class Worker extends events_1.EventEmitter {
         if (!this.connection || !this.connection.redis) {
             return;
         }
-        await this.connection.redis.srem(this.connection.key("workers"), name + ":" + queues);
-        await this.connection.redis.del(this.connection.key("worker", "ping", name));
-        await this.connection.redis.del(this.connection.key("worker", name, queues));
-        await this.connection.redis.del(this.connection.key("worker", name, queues, "started"));
-        await this.connection.redis.del(this.connection.key("stat", "failed", name));
-        await this.connection.redis.del(this.connection.key("stat", "processed", name));
+        await this.connection.redis
+            .multi()
+            .srem(this.connection.key("workers"), name + ":" + queues)
+            .del(this.connection.key("worker", "ping", name))
+            .del(this.connection.key("worker", name, queues))
+            .del(this.connection.key("worker", name, queues, "started"))
+            .del(this.connection.key("stat", "failed", name))
+            .del(this.connection.key("stat", "processed", name))
+            .exec();
     }
     async checkQueues() {
         if (Array.isArray(this.queues) && this.queues.length > 0) {
@@ -350,7 +383,7 @@ class Worker extends events_1.EventEmitter {
         }
         else {
             try {
-                return this.queues.join(",");
+                return Array.isArray(this.queues) ? this.queues.join(",") : this.queues;
             }
             catch (e) {
                 return "";

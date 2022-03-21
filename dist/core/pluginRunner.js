@@ -21,15 +21,16 @@ async function RunPlugins(self, type, func, queue, job, args, pluginCounter) {
     return RunPlugins(self, type, func, queue, job, args, pluginCounter);
 }
 exports.RunPlugins = RunPlugins;
-async function RunPlugin(self, PluginRefrence, type, func, queue, job, args) {
+async function RunPlugin(self, PluginReference, type, func, queue, job, args) {
     if (!job)
         return true;
-    let pluginName = PluginRefrence;
-    if (typeof PluginRefrence === "function") {
-        pluginName = new PluginRefrence(self, func, queue, job, args, {}).name;
+    let pluginName;
+    if (typeof PluginReference === "function") {
+        // @ts-ignore
+        pluginName = new PluginReference(self, func, queue, job, args, {}).name;
     }
     else if (typeof pluginName === "function") {
-        pluginName = pluginName.name;
+        pluginName = pluginName["name"];
     }
     let pluginOptions = null;
     if (self.jobs[func].pluginOptions &&
@@ -39,13 +40,14 @@ async function RunPlugin(self, PluginRefrence, type, func, queue, job, args) {
     else {
         pluginOptions = {};
     }
-    let plugin = null;
-    if (typeof PluginRefrence === "string") {
-        const PluginConstructor = require(`./../plugins/${PluginRefrence}`)[PluginRefrence];
+    let plugin;
+    if (typeof PluginReference === "string") {
+        const PluginConstructor = require(`./../plugins/${PluginReference}`)[PluginReference];
         plugin = new PluginConstructor(self, func, queue, job, args, pluginOptions);
     }
-    else if (typeof PluginRefrence === "function") {
-        plugin = new PluginRefrence(self, func, queue, job, args, pluginOptions);
+    else if (typeof PluginReference === "function") {
+        // @ts-ignore
+        plugin = new PluginReference(self, func, queue, job, args, pluginOptions);
     }
     else {
         throw new Error("Plugin must be the constructor name or an object");
@@ -55,6 +57,7 @@ async function RunPlugin(self, PluginRefrence, type, func, queue, job, args) {
         typeof plugin[type] !== "function") {
         return true;
     }
+    // @ts-ignore
     return plugin[type]();
 }
 exports.RunPlugin = RunPlugin;

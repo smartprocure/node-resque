@@ -1,7 +1,7 @@
 import { Plugin } from "..";
 export declare class Noop extends Plugin {
-    afterPerform(): boolean;
-    beforeEnqueue(): boolean;
-    afterEnqueue(): boolean;
-    beforePerform(): boolean;
+    afterPerform(): Promise<boolean>;
+    beforeEnqueue(): Promise<boolean>;
+    afterEnqueue(): Promise<boolean>;
+    beforePerform(): Promise<boolean>;
 }

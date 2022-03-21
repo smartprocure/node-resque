@@ -1,7 +1,11 @@
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
-    Object.defineProperty(o, k2, { enumerable: true, get: function() { return m[k]; } });
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
 }) : (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
@@ -63,13 +67,15 @@ class Queue extends events_1.EventEmitter {
     async enqueue(q, func, args = []) {
         args = arrayify(args);
         const job = this.jobs[func];
-        const toRun = await pluginRunner_1.RunPlugins(this, "beforeEnqueue", func, q, job, args);
-        if (toRun === false) {
+        const toRun = await (0, pluginRunner_1.RunPlugins)(this, "beforeEnqueue", func, q, job, args);
+        if (toRun === false)
             return toRun;
-        }
-        await this.connection.redis.sadd(this.connection.key("queues"), q);
-        await this.connection.redis.rpush(this.connection.key("queue", q), this.encode(q, func, args));
-        await pluginRunner_1.RunPlugins(this, "afterEnqueue", func, q, job, args);
+        await this.connection.redis
+            .multi()
+            .sadd(this.connection.key("queues"), q)
+            .rpush(this.connection.key("queue", q), this.encode(q, func, args))
+            .exec();
+        await (0, pluginRunner_1.RunPlugins)(this, "afterEnqueue", func, q, job, args);
         return toRun;
     }
     /**
@@ -96,7 +102,7 @@ class Queue extends events_1.EventEmitter {
             .multi()
             .rpush(this.connection.key("delayed:" + rTimestamp), item)
             .sadd(this.connection.key("timestamps:" + item), "delayed:" + rTimestamp)
-            .zadd(this.connection.key("delayed_queue_schedule"), rTimestamp.toString(), rTimestamp.toString())
+            .zadd(this.connection.key("delayed_queue_schedule"), rTimestamp, rTimestamp.toString())
             .exec();
     }
     /**
@@ -133,27 +139,55 @@ class Queue extends events_1.EventEmitter {
         return this.connection.redis.llen(this.connection.key("queue", q));
     }
     /**
-     * - jobs are deleted by those matching a `func` and agument collection within a given queue.
+     * - jobs are deleted by those matching a `func` and argument collection within a given queue.
      * - You might match none, or you might match many.
      */
     async del(q, func, args = [], count = 0) {
         args = arrayify(args);
         return this.connection.redis.lrem(this.connection.key("queue", q), count, this.encode(q, func, args));
     }
+    /**
+     * delByFunction
+     *  * will delete all jobs in the given queue of the named function/class
+     *  * will not prevent new jobs from being added as this method is running
+     *  * will not delete jobs in the delayed queues
+     * @param q - queue to look in
+     * @param func - function name to delete any jobs with
+     * @param start - optional place to start looking in list (default: beginning of list)
+     * @param stop - optional place to end looking in list (default: end of list)
+     * @returns number of jobs deleted from queue
+     */
+    async delByFunction(q, func, start = 0, stop = -1) {
+        const jobs = await this.connection.redis.lrange(this.connection.key("queue", q), start, stop);
+        let numJobsDeleted = 0;
+        const pipeline = this.connection.redis.multi();
+        for (let i = 0; i < jobs.length; i++) {
+            const jobEncoded = jobs[i];
+            const { class: jobFunc } = JSON.parse(jobEncoded);
+            if (jobFunc === func) {
+                pipeline.lrem(this.connection.key("queue", q), 0, jobEncoded);
+                numJobsDeleted++;
+            }
+        }
+        await pipeline.exec();
+        return numJobsDeleted;
+    }
     async delDelayed(q, func, args = []) {
         const timestamps = [];
         args = arrayify(args);
         const search = this.encode(q, func, args);
         const members = await this.connection.redis.smembers(this.connection.key("timestamps:" + search));
+        const pipeline = this.connection.redis.multi();
         for (const i in members) {
             const key = members[i];
             const count = await this.connection.redis.lrem(this.connection.key(key), 0, search);
             if (count > 0) {
                 timestamps.push(key.split(":")[key.split(":").length - 1]);
-                await this.connection.redis.srem(this.connection.key("timestamps:" + search), key);
+                pipeline.srem(this.connection.key("timestamps:" + search), key);
             }
         }
-        return timestamps;
+        await pipeline.exec();
+        return timestamps.map((t) => parseInt(t, 10));
     }
     /**
      * - learn the timestamps at which a job is scheduled to be run.
@@ -165,7 +199,7 @@ class Queue extends events_1.EventEmitter {
         const search = this.encode(q, func, args);
         const members = await this.connection.redis.smembers(this.connection.key("timestamps:" + search));
         members.forEach((key) => {
-            timestamps.push(key.split(":")[key.split(":").length - 1]);
+            timestamps.push(parseInt(key.split(":")[key.split(":").length - 1]));
         });
         return timestamps;
     }
@@ -214,7 +248,7 @@ class Queue extends events_1.EventEmitter {
         for (const i in timestamps) {
             const timestamp = timestamps[i];
             const { tasks, rTimestamp } = await this.delayedAt(timestamp);
-            results[rTimestamp * 1000] = tasks;
+            results[(rTimestamp * 1000).toString(10)] = tasks;
         }
         return results;
     }
@@ -234,7 +268,6 @@ class Queue extends events_1.EventEmitter {
         if (keys.length === 0) {
             return data;
         }
-        // const values = await this.connection.redis.mget(keys)
         for (const i in keys) {
             let value = await this.connection.redis.get(keys[i]);
             values.push(value);
@@ -297,6 +330,7 @@ class Queue extends events_1.EventEmitter {
         const workers = await this.workers();
         for (const i in Object.keys(workers)) {
             const w = Object.keys(workers)[i];
+            //@ts-ignore
             results[w] = "started";
             let data = await this.workingOn(w, workers[w]);
             if (data) {
@@ -332,18 +366,20 @@ class Queue extends events_1.EventEmitter {
                     failed_at: new Date().toString(),
                 };
             }
-            await this.connection.redis.incr(this.connection.key("stat", "failed"));
-            await this.connection.redis.incr(this.connection.key("stat", "failed", workerName));
-            if (errorPayload) {
-                await this.connection.redis.rpush(this.connection.key("failed"), JSON.stringify(errorPayload));
-            }
         }
-        await this.connection.redis.del(this.connection.key("stat", "failed", workerName));
-        await this.connection.redis.del(this.connection.key("stat", "processed", workerName));
-        await this.connection.redis.del(this.connection.key("worker", "ping", workerName));
-        await this.connection.redis.del(this.connection.key("worker", workerName, queues, "started"));
-        await this.connection.redis.del(this.connection.key("worker", workerName));
-        await this.connection.redis.srem(this.connection.key("workers"), workerName + ":" + queues);
+        const pipeline = this.connection.redis
+            .multi()
+            .incr(this.connection.key("stat", "failed"))
+            .del(this.connection.key("stat", "failed", workerName))
+            .del(this.connection.key("stat", "processed", workerName))
+            .del(this.connection.key("worker", "ping", workerName))
+            .del(this.connection.key("worker", workerName, queues, "started"))
+            .del(this.connection.key("worker", workerName))
+            .srem(this.connection.key("workers"), workerName + ":" + queues);
+        if (errorPayload) {
+            pipeline.rpush(this.connection.key("failed"), JSON.stringify(errorPayload));
+        }
+        await pipeline.exec();
         return errorPayload;
     }
     async cleanOldWorkers(age) {
@@ -353,8 +389,10 @@ class Queue extends events_1.EventEmitter {
         const data = await this.allWorkingOn();
         for (const i in Object.keys(data)) {
             const workerName = Object.keys(data)[i];
-            if (data[workerName].run_at &&
-                Date.now() - Date.parse(data[workerName].run_at) > age) {
+            const payload = data[workerName];
+            if (typeof payload !== "string" &&
+                payload.run_at &&
+                Date.now() - Date.parse(payload.run_at) > age) {
                 const errorPayload = await this.forceCleanWorker(workerName);
                 if (errorPayload && errorPayload.worker) {
                     results[errorPayload.worker] = errorPayload;
@@ -418,7 +456,13 @@ class Queue extends events_1.EventEmitter {
         }
     }
     /**
-     * - stats will be a hash containing details about all the queues in your redis, and how many jobs are in each
+     * Return the currently elected leader
+     */
+    async leader() {
+        return this.connection.redis.get(this.leaderKey());
+    }
+    /**
+     * - stats will be a hash containing details about all the queues in your redis, and how many jobs are in each, and who the leader is
      */
     async stats() {
         const data = {};
@@ -433,6 +477,12 @@ class Queue extends events_1.EventEmitter {
             data[k] = values[i];
         }
         return data;
+    }
+    /**
+     * The redis key which holds the currently elected leader
+     */
+    leaderKey() {
+        return this.connection.key("resque_scheduler_leader_lock");
     }
 }
 exports.Queue = Queue;

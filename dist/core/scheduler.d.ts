@@ -30,19 +30,22 @@ export declare interface Scheduler {
 }
 export declare type SchedulerEvent = "start" | "end" | "poll" | "leader" | "cleanStuckWorker" | "error" | "workingTimestamp" | "transferredJob";
 export declare class Scheduler extends EventEmitter {
-    constructor(options: any, jobs?: {});
+    constructor(options: SchedulerOptions, jobs?: Jobs);
     connect(): Promise<void>;
     start(): Promise<void>;
     end(): Promise<unknown>;
-    poll(): any;
+    poll(): Promise<void>;
     private pollAgainLater;
+    private tryForLeader;
+    private releaseLeaderLock;
     private nextDelayedTimestamp;
     private enqueueDelayedItemsForTimestamp;
     private nextItemForTimestamp;
     private transfer;
     private cleanupTimestamp;
     private checkStuckWorkers;
-    forceCleanWorker(workerName: any, delta: any): Promise<void>;
+    forceCleanWorker(workerName: string, delta: number): Promise<void>;
     private watchIfPossible;
     private unwatchIfPossible;
+    private canWatch;
 }

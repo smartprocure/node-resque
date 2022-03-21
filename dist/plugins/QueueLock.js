@@ -11,6 +11,7 @@ class QueueLock extends __1.Plugin {
         const set = await this.queueObject.connection.redis.setnx(key, timeout);
         //@ts-ignore
         if (set === true || set === 1) {
+            await this.queueObject.connection.redis.expire(key, this.lockTimeout());
             return true;
         }
         const redisTimeout = await this.queueObject.connection.redis.get(key);
@@ -19,10 +20,10 @@ class QueueLock extends __1.Plugin {
             return false;
         }
         await this.queueObject.connection.redis.set(key, timeout);
-        await this.queueObject.connection.redis.expire(key, timeout);
+        await this.queueObject.connection.redis.expire(key, this.lockTimeout());
         return true;
     }
-    afterEnqueue() {
+    async afterEnqueue() {
         return true;
     }
     async beforePerform() {
@@ -30,7 +31,7 @@ class QueueLock extends __1.Plugin {
         await this.queueObject.connection.redis.del(key);
         return true;
     }
-    afterPerform() {
+    async afterPerform() {
         return true;
     }
     lockTimeout() {

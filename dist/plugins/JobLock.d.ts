@@ -1,7 +1,7 @@
 import { Plugin } from "..";
 export declare class JobLock extends Plugin {
-    beforeEnqueue(): boolean;
-    afterEnqueue(): boolean;
+    beforeEnqueue(): Promise<boolean>;
+    afterEnqueue(): Promise<boolean>;
     beforePerform(): Promise<boolean>;
     afterPerform(): Promise<boolean>;
     reEnqueue(): Promise<void>;

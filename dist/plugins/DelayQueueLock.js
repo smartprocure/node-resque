@@ -13,13 +13,13 @@ class DelayQueueLock extends __1.Plugin {
             return true;
         }
     }
-    afterEnqueue() {
+    async afterEnqueue() {
         return true;
     }
-    beforePerform() {
+    async beforePerform() {
         return true;
     }
-    afterPerform() {
+    async afterPerform() {
         return true;
     }
 }
